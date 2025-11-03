@@ -1,9 +1,9 @@
 name: Crawl & Update SQL Daily
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:          # Cho phép chạy thủ công
   schedule:
-    - cron: "0 0 * * *"   # Chạy mỗi ngày (00:00 UTC ~ 07:00 VN)
+    - cron: "0 0 * * *"       # Chạy tự động mỗi ngày 00:00 UTC (07:00 VN)
 
 jobs:
   update-sql:
@@ -27,7 +27,6 @@ jobs:
           jupyter nbconvert --to python APICAO.ipynb --output APICAO.py
 
       - name: Run crawler and capture CSV output
-        id: crawl
         run: |
           python APICAO.py > crawl_output.txt
 
@@ -35,31 +34,40 @@ jobs:
         run: |
           python - << 'EOF'
           import pandas as pd
-          import re
+          from io import StringIO
 
           sql_file = "phongtro_danang.sql"
 
-          # ==== ĐỌC CSV TỪ OUTPUT ====
+          # ==== ĐỌC OUTPUT TỪ NOTEBOOK ====
           with open("crawl_output.txt", "r", encoding="utf-8") as f:
-              content = f.read()
+              lines = f.read().splitlines()
 
-          # Lấy phần CSV từ output
-          match = re.search(r'(?s)(?:^|\\n)([A-Z].+)', content)
-          if not match:
-              raise Exception("❌ Không tìm thấy CSV trong output của APICAO.py")
+          # Tìm dòng chứa header CSV (dòng bắt đầu bằng "location")
+          csv_start = None
+          for i, line in enumerate(lines):
+              if line.lower().startswith("location,"):
+                  csv_start = i
+                  break
 
-          csv_data = match.group(1).strip()
+          if csv_start is None:
+              raise Exception("❌ Không tìm thấy CSV trong output APICAO.py")
 
-          from io import StringIO
+          csv_data = "\n".join(lines[csv_start:]).strip()
+
           df = pd.read_csv(StringIO(csv_data))
 
-          # ==== ĐỌC FILE SQL CŨ ====
+          # ==== ĐỌC SQL CŨ ====
           with open(sql_file, "r", encoding="utf-8") as f:
               existing_lines = set(line.strip() for line in f if line.strip())
 
+          # ==== THÊM DÒNG MỚI NẾU CHƯA TỒN TẠI ====
           new_lines = []
           for _, row in df.iterrows():
-              line = f"INSERT INTO phongtro_danang VALUES ('{row['Location']}', '{row['Price']}', '{row['Area']}', '{row['Date']}', '{row['Fridge']}', '{row['Washer']}', '{row['AirConditioning']}', '{row['Wifi']}');"
+              def v(x):
+                  return "NULL" if x is None else f"'{x}'"
+              
+              line = f"INSERT INTO phongtro_danang VALUES ({v(row['location'])}, {v(row['price'])}, {v(row['area'])}, {v(row['date_posted'])}, {v(row['fridge'])}, {v(row['washer'])}, {v(row['air_condition'])}, {v(row['wifi'])});"
+              
               if line not in existing_lines:
                   new_lines.append(line)
 
@@ -67,9 +75,10 @@ jobs:
               with open(sql_file, "a", encoding="utf-8") as f:
                   for line in new_lines:
                       f.write("\n" + line)
+
               print(f'✅ Đã thêm {len(new_lines)} dòng mới vào SQL')
           else:
-              print("⚠️ Không có dữ liệu mới")
+              print("⚠️ Không có dữ liệu mới')
           EOF
 
       - name: Commit & Push Changes
