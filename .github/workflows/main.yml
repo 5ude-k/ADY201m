@@ -1,9 +1,9 @@
-name: Crawl & Update SQL
+name: Crawl & Update SQL Daily
 
 on:
-  workflow_dispatch:            # Cho phép chạy thủ công
+  workflow_dispatch:
   schedule:
-    - cron: "0 */12 * * *"      # Chạy mỗi 12 giờ (bạn có thể đổi)
+    - cron: "0 0 * * *"   # Chạy mỗi ngày (00:00 UTC ~ 07:00 VN)
 
 jobs:
   update-sql:
@@ -22,47 +22,61 @@ jobs:
         run: |
           pip install pandas jupyter nbconvert
 
-      - name: Convert Notebook to .py
+      - name: Convert Notebook to Python
         run: |
           jupyter nbconvert --to python APICAO.ipynb --output APICAO.py
 
-      - name: Run crawler notebook as Python
+      - name: Run crawler and capture CSV output
+        id: crawl
         run: |
-          python APICAO.py
+          python APICAO.py > crawl_output.txt
 
       - name: Update SQL File
         run: |
           python - << 'EOF'
           import pandas as pd
-
-          # === Load DataFrame (giả sử crawler tạo file data.csv) ===
-          df = pd.read_csv("data.csv")  # Nếu bạn dùng tên khác thì đổi ở đây
+          import re
 
           sql_file = "phongtro_danang.sql"
+
+          # ==== ĐỌC CSV TỪ OUTPUT ====
+          with open("crawl_output.txt", "r", encoding="utf-8") as f:
+              content = f.read()
+
+          # Lấy phần CSV từ output
+          match = re.search(r'(?s)(?:^|\\n)([A-Z].+)', content)
+          if not match:
+              raise Exception("❌ Không tìm thấy CSV trong output của APICAO.py")
+
+          csv_data = match.group(1).strip()
+
+          from io import StringIO
+          df = pd.read_csv(StringIO(csv_data))
+
+          # ==== ĐỌC FILE SQL CŨ ====
           with open(sql_file, "r", encoding="utf-8") as f:
-              existing_lines = set([line.strip() for line in f.readlines() if line.strip()])
+              existing_lines = set(line.strip() for line in f if line.strip())
 
-          new_sql_lines = []
+          new_lines = []
           for _, row in df.iterrows():
-              line = f"INSERT INTO phongtro_danang VALUES ('{row['location']}', '{row['price']}', '{row['area']}', '{row['date_posted']}', '{row['fridge']}', '{row['washer']}', '{row['air_condition']}', '{row['wifi']}');"
+              line = f"INSERT INTO phongtro_danang VALUES ('{row['Location']}', '{row['Price']}', '{row['Area']}', '{row['Date']}', '{row['Fridge']}', '{row['Washer']}', '{row['AirConditioning']}', '{row['Wifi']}');"
               if line not in existing_lines:
-                  new_sql_lines.append(line)
+                  new_lines.append(line)
 
-          if new_sql_lines:
+          if new_lines:
               with open(sql_file, "a", encoding="utf-8") as f:
-                  for line in new_sql_lines:
+                  for line in new_lines:
                       f.write("\n" + line)
-
-              print(f"✅ Added {len(new_sql_lines)} new rows to SQL file")
+              print(f'✅ Đã thêm {len(new_lines)} dòng mới vào SQL')
           else:
-              print("⚠️ No new rows found. Nothing to update.")
+              print("⚠️ Không có dữ liệu mới")
           EOF
 
       - name: Commit & Push Changes
-        if: success()
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add phongtro_danang.sql
-          git commit -m "Auto update SQL data" || echo "No changes to commit"
+          git commit -m "Daily auto-update SQL data" || echo "No changes to commit"
           git push || echo "No changes to push"
+
