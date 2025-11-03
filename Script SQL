@@ -1,0 +1,116 @@
+IF DB_ID(N'PhongTroDaNang_MSSQL') IS NULL
+BEGIN
+    CREATE DATABASE PhongTroDaNang_MSSQL;
+END
+GO
+USE PhongTroDaNang_MSSQL;
+GO
+
+IF OBJECT_ID('staging_phongtro','U') IS NOT NULL
+    DROP TABLE staging_phongtro;
+GO
+
+CREATE TABLE staging_phongtro (
+    id_stg INT IDENTITY(1,1) PRIMARY KEY,
+    location NVARCHAR(MAX),
+    price NVARCHAR(100),
+    area NVARCHAR(100),
+    date_posted NVARCHAR(100),
+    fridge NVARCHAR(50),
+    washer NVARCHAR(50),
+    air_condition NVARCHAR(50),
+    wifi NVARCHAR(50)
+);
+GO
+
+
+IF OBJECT_ID('phongtro_danang_clean','U') IS NOT NULL
+    DROP TABLE phongtro_danang_clean;
+GO
+
+CREATE TABLE phongtro_danang_clean (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    location NVARCHAR(150) NOT NULL,
+    price BIGINT NULL,       
+    area INT NULL,           
+    date_posted DATE NULL,
+    fridge BIT NOT NULL DEFAULT(0),
+    washer BIT NOT NULL DEFAULT(0),
+    air_condition BIT NOT NULL DEFAULT(0),
+    wifi BIT NOT NULL DEFAULT(0),
+    source_row INT NULL      
+);
+GO
+
+INSERT INTO phongtro_danang_clean (location, price, area, date_posted, fridge, washer, air_condition, wifi, source_row)
+SELECT
+    -- clean location (trim)
+    LEFT(LTRIM(RTRIM(COALESCE(location, ''))), 150) AS location,
+
+    -- price: thử CAST trực tiếp. Nhiều bản gốc có '2500000.0' hoặc '2500000' hoặc NULL.
+    TRY_CAST(
+        -- remove possible thousand separators (commas) and trailing .0 if present
+        REPLACE(REPLACE(REPLACE(COALESCE(price, ''), ',', ''), '.0', ''), '.00', '')
+    AS BIGINT) AS price,
+
+    -- area -> INT
+    TRY_CAST(
+        REPLACE(REPLACE(COALESCE(area, ''), ',',''), '.0','')
+    AS INT) AS area,
+
+    -- date_posted: thử nhiều style (yyyy-mm-dd, mm/dd/yyyy, dd/mm/yyyy)
+    COALESCE(
+        TRY_CONVERT(date, date_posted, 120),  -- 'yyyy-mm-dd' or 'yyyy-mm-dd hh:mi:ss'
+        TRY_CONVERT(date, date_posted, 23),   -- 'yyyy-mm-dd'
+        TRY_CONVERT(date, date_posted, 101),  -- 'mm/dd/yyyy'
+        TRY_CONVERT(date, date_posted, 103),  -- 'dd/mm/yyyy'
+        TRY_CONVERT(date, date_posted, 1),    -- 'mm/dd/yy' or similar
+        TRY_CONVERT(date, date_posted, 3)     -- another dd/mm/yy
+    ) AS date_posted,
+
+    -- fridge, washer, air_condition, wifi: chuyển '1'/'0'/'true'/'false' vào BIT
+    CASE WHEN LOWER(LTRIM(RTRIM(COALESCE(fridge,'')))) IN ('1','true','yes','y') THEN 1 ELSE 0 END AS fridge,
+    CASE WHEN LOWER(LTRIM(RTRIM(COALESCE(washer,'')))) IN ('1','true','yes','y') THEN 1 ELSE 0 END AS washer,
+    CASE WHEN LOWER(LTRIM(RTRIM(COALESCE(air_condition,'')))) IN ('1','true','yes','y') THEN 1 ELSE 0 END AS air_condition,
+    CASE WHEN LOWER(LTRIM(RTRIM(COALESCE(wifi,'')))) IN ('1','true','yes','y') THEN 1 ELSE 0 END AS wifi,
+
+    id_stg AS source_row
+FROM staging_phongtro;
+GO
+
+PRINT '--- Rows where price IS NULL after convert (check for bad price) ---';
+SELECT s.id_stg, s.location, s.price FROM staging_phongtro s
+LEFT JOIN phongtro_danang_clean c ON s.id_stg = c.source_row
+WHERE c.price IS NULL;
+-- (tương tự kiểm tra area/date)
+PRINT '--- Rows where area IS NULL after convert (check for bad area) ---';
+SELECT s.id_stg, s.location, s.area FROM staging_phongtro s
+LEFT JOIN phongtro_danang_clean c ON s.id_stg = c.source_row
+WHERE c.area IS NULL;
+
+PRINT '--- Rows where date_posted IS NULL after convert (check for bad date formats) ---';
+SELECT s.id_stg, s.location, s.date_posted FROM staging_phongtro s
+LEFT JOIN phongtro_danang_clean c ON s.id_stg = c.source_row
+WHERE c.date_posted IS NULL;
+GO
+
+SELECT 'INSERT INTO phongtro_danang_clean (location, price, area, date_posted, fridge, washer, air_condition, wifi) VALUES ('
+    + QUOTENAME(location,'''') + ', '
+    + COALESCE(CAST(price AS VARCHAR(20)), 'NULL') + ', '
+    + COALESCE(CAST(area AS VARCHAR(10)), 'NULL') + ', '
+    + (CASE WHEN date_posted IS NOT NULL THEN QUOTENAME(CONVERT(varchar(10), date_posted, 23), '''') ELSE 'NULL' END) + ', '
+    + CAST(fridge AS VARCHAR(1)) + ', '
+    + CAST(washer AS VARCHAR(1)) + ', '
+    + CAST(air_condition AS VARCHAR(1)) + ', '
+    + CAST(wifi AS VARCHAR(1)) + ');' 
+AS insert_statement
+FROM phongtro_danang_clean
+ORDER BY id;
+GO
+
+CREATE INDEX IDX_ptdn_price ON phongtro_danang_clean(price);
+CREATE INDEX IDX_ptdn_location ON phongtro_danang_clean(location);
+CREATE INDEX IDX_ptdn_date ON phongtro_danang_clean(date_posted);
+GO
+
+
