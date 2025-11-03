@@ -1,0 +1,68 @@
+name: Crawl & Update SQL
+
+on:
+  workflow_dispatch:            # Cho phép chạy thủ công
+  schedule:
+    - cron: "0 */12 * * *"      # Chạy mỗi 12 giờ (bạn có thể đổi)
+
+jobs:
+  update-sql:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas jupyter nbconvert
+
+      - name: Convert Notebook to .py
+        run: |
+          jupyter nbconvert --to python APICAO.ipynb --output APICAO.py
+
+      - name: Run crawler notebook as Python
+        run: |
+          python APICAO.py
+
+      - name: Update SQL File
+        run: |
+          python - << 'EOF'
+          import pandas as pd
+
+          # === Load DataFrame (giả sử crawler tạo file data.csv) ===
+          df = pd.read_csv("data.csv")  # Nếu bạn dùng tên khác thì đổi ở đây
+
+          sql_file = "phongtro_danang.sql"
+          with open(sql_file, "r", encoding="utf-8") as f:
+              existing_lines = set([line.strip() for line in f.readlines() if line.strip()])
+
+          new_sql_lines = []
+          for _, row in df.iterrows():
+              line = f"INSERT INTO phongtro_danang VALUES ('{row['location']}', '{row['price']}', '{row['area']}', '{row['date_posted']}', '{row['fridge']}', '{row['washer']}', '{row['air_condition']}', '{row['wifi']}');"
+              if line not in existing_lines:
+                  new_sql_lines.append(line)
+
+          if new_sql_lines:
+              with open(sql_file, "a", encoding="utf-8") as f:
+                  for line in new_sql_lines:
+                      f.write("\n" + line)
+
+              print(f"✅ Added {len(new_sql_lines)} new rows to SQL file")
+          else:
+              print("⚠️ No new rows found. Nothing to update.")
+          EOF
+
+      - name: Commit & Push Changes
+        if: success()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add phongtro_danang.sql
+          git commit -m "Auto update SQL data" || echo "No changes to commit"
+          git push || echo "No changes to push"
