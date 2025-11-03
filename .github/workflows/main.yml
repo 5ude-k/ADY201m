@@ -3,7 +3,7 @@ name: Crawl 2 Notebooks & Update SQL Daily
 on:
   workflow_dispatch:          # Cho phép chạy thủ công
   schedule:
-    - cron: "0 0 * * *"       # Tự động 00:00 UTC (07:00 VN)
+    - cron: "0 0 * * *"       # Chạy tự động mỗi ngày 00:00 UTC (07:00 VN)
 
 jobs:
   update-sql:
@@ -22,14 +22,14 @@ jobs:
         run: |
           pip install pandas jupyter nbconvert beautifulsoup4 requests openpyxl
 
-      # --- 1️⃣ Chạy notebook crawl_phongtro.ipynb ---
-      - name: Run phongtro notebook
+      # --- 1️⃣ Chạy notebook BeautifulSoup ---
+      - name: Run BeautifulSoup crawler
         run: |
-          jupyter nbconvert --to python crawl_phongtro.ipynb --output crawl_phongtro.py
-          python crawl_phongtro.py > crawl_output_1.txt
+          jupyter nbconvert --to python beautifulsoupcaocao.ipynb --output beautifulsoupcaocao.py
+          python beautifulsoupcaocao.py > crawl_output_1.txt
 
-      # --- 2️⃣ Chạy notebook APICAO.ipynb ---
-      - name: Run APICAO notebook
+      # --- 2️⃣ Chạy notebook APICAO ---
+      - name: Run APICAO crawler
         run: |
           jupyter nbconvert --to python APICAO.ipynb --output APICAO.py
           python APICAO.py > crawl_output_2.txt
@@ -44,18 +44,9 @@ jobs:
 
           sql_file = "phongtro_danang.sql"
 
-          def read_csv_output(path, fallback=None):
-              """Cố đọc file CSV thật nếu có, nếu không thì lấy từ text output"""
-              csv_file = fallback
-              txt_file = path
-
-              # Ưu tiên file CSV nếu tồn tại
-              if csv_file and os.path.exists(csv_file):
-                  print(f"📦 Đọc file CSV {csv_file}")
-                  return pd.read_csv(csv_file)
-              
-              # Nếu không, đọc từ output text
-              with open(txt_file, "r", encoding="utf-8") as f:
+          def extract_csv(path):
+              """Tìm phần CSV trong file output (bắt đầu từ dòng 'location,')"""
+              with open(path, "r", encoding="utf-8") as f:
                   lines = f.read().splitlines()
               for i, line in enumerate(lines):
                   if line.lower().startswith("location,"):
@@ -63,9 +54,9 @@ jobs:
                       return pd.read_csv(StringIO(csv_str))
               return pd.DataFrame()
 
-          # --- Đọc dữ liệu từ 2 notebook ---
-          df1 = read_csv_output("crawl_output_1.txt", "phongtro_danang.csv")
-          df2 = read_csv_output("crawl_output_2.txt")
+          # --- Đọc output từ 2 notebook ---
+          df1 = extract_csv("crawl_output_1.txt")
+          df2 = extract_csv("crawl_output_2.txt")
 
           df = pd.concat([df1, df2], ignore_index=True).drop_duplicates()
 
@@ -116,6 +107,6 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add phongtro_danang.sql phongtro_danang.csv || true
+          git add phongtro_danang.sql || true
           git commit -m "Daily update from both notebooks (merged unique rows)" || echo "No changes"
           git push || echo "No changes to push"
