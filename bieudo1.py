@@ -1,0 +1,22 @@
+
+import matplotlib.pyplot as plt
+
+df['price_million'] = df['price'] / 1_000_000
+
+avg_price = df.groupby('district')['price_million'].mean().sort_values(ascending=False
+
+plt.figure(figsize=(10, 6))
+plt.barh(avg_price.index, avg_price.values)
+
+plt.title("Giá thuê trung bình theo quận", fontsize=14, weight='bold')
+plt.xlabel("Giá trung bình (triệu đồng)")
+plt.ylabel("Quận")
+
+plt.gca().invert_yaxis()
+
+plt.grid(alpha=0.3)
+plt.show()
+
+top3 = avg_price.head(3)
+print("Top 3 quận có giá thuê trung bình cao nhất:")
+print(top3)
